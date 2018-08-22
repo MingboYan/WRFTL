@@ -3073,12 +3073,13 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                         printf("before WRFTL hit in WCMT error, ListLength is %d, real_arr size is %d\n", ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
                         assert(0);
                     }
-
                     WRFTL_Hit_WCMT(blkno, operation);
                     if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){ //debug
                         printf("after WRFTL hit in WCMT error, ListLength is %d, real_arr size is %d\n", ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
                         assert(0);
                     }
+                    //数据统计
+                    cache_scmt_hit++;
                 }
                 // req_entry hit in RCMT
                 else if (MLC_opagemap[blkno].map_status==MAP_GHOST){
@@ -3096,6 +3097,8 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                         WRFTL_Move_RCMT2MRU(blkno, operation);
 
                     }
+                    //数据统计
+                    cache_slcmt_hit++;
                 }
                 // req_entry miss in CMT
                 else{
