@@ -909,8 +909,9 @@ double callFsim(unsigned int secno, int scount, int operation,int flash_flag)
 		// CPFTL_Scheme(&blkno,&cnt,operation,flash_flag);
         // ADFTL scheme
         // ADFTL_Scheme(&blkno,&cnt,operation,flash_flag);
-        // WRFTL 
-              break;
+        // WRFTL scheme
+            WRFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            break;
         }//end-switch
 
   }//end-while
