@@ -2997,7 +2997,7 @@ void ADFTL_pre_load_entry_into_SCMT(int *pageno,int *req_size,int operation)
  *          author:ymb WRFTL
  * *************************************/
 int WRFTL_Window_Size=0; //WRFTL优先置换区大小
-double WRFLT_Tau=0.3; //
+double WRFTL_Tau=0.3; //通过Tau调控window_size比例
 // int warm_flag; ADFTL定义过
 void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag);
 void WRFTL_init_arr();
@@ -3007,6 +3007,7 @@ void WRFLT_Move_RCMT2WCMT(int blkno, int operation);
 void WRFLT_Pre_Load(int *pageno, int *req_size, int operation);
 void WRFLT_WCMT_Is_Full(int flag);
 void WRFLT_RCMT_Is_Full(int flag);
+int WRFTL_Find_Victim_In_WCMT();
 
 Node *WRFTL_Head=NULL;
 
@@ -3052,6 +3053,10 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                 // ghost_arr is 24KB ,6144 entries
                 MAP_GHOST_MAX_ENTRIES=6144;
                 ghost_arr=(int *)malloc(sizeof(int)*MAP_GHOST_MAX_ENTRIES);
+                //WCMT的优先置换区
+                WRFTL_Window_Size=(int)MAP_REAL_MAX_ENTRIES*WRFTL_Tau;
+
+                WRFTL_Head=CreateList();
                 WRFTL_init_arr();
                 zhou_flag=1;
             }
@@ -3068,6 +3073,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                         printf("before WRFTL hit in WCMT error, ListLength is %d, real_arr size is %d\n", ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
                         assert(0);
                     }
+
                     WRFTL_Hit_WCMT(blkno, operation);
                     if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){ //debug
                         printf("after WRFTL hit in WCMT error, ListLength is %d, real_arr size is %d\n", ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
@@ -3076,16 +3082,19 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                 }
                 // req_entry hit in RCMT
                 else if (MLC_opagemap[blkno].map_status==MAP_GHOST){
-                    if(operation==1){//read
-                        WRFTL_Move_RCMT2MRU(blkno, operation);
-                    }
-                    else{
+                    //write
+                    if(operation==0){
                         WRFLT_Move_RCMT2WCMT(blkno, operation);
                         //debug
                         if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){
                             printf(" after WRFTL_Move_RCMT2WCMT error,ListLength is %d,real_arr size is %d\n",ListLength(ADFTL_Head),MAP_REAL_NUM_ENTRIES);
                             assert(0);
                         }
+                    }
+                    //read
+                    else{
+                        WRFTL_Move_RCMT2MRU(blkno, operation);
+
                     }
                 }
                 // req_entry miss in CMT
@@ -3175,7 +3184,7 @@ void WRFTL_Move_RCMT2MRU(int blkno, int operation)
     }
     else
         read_count++;
-
+    //ghost_arr不进行移动操作
     send_flash_request(blkno*8, 8, operation, 1,1);
 }
 
@@ -3210,6 +3219,10 @@ void WRFLT_Move_RCMT2WCMT(int blkno, int operation)
     //链表操作
     AddNewLPNInMRU(blkno, WRFTL_Head);
     MAP_REAL_NUM_ENTRIES++;
+    if(MAP_REAL_NUM_ENTRIES>MAP_REAL_MAX_ENTRIES){
+        printf("real_arr overflow (WRFLT_Move_RCMT2WCMT) lpn=%d\n",blkno);
+        assert(0);
+    }
     //应只有写操作
     if(operation==0){
         write_count++;
@@ -3493,67 +3506,100 @@ void WRFLT_WCMT_Is_Full(int flag)
     if(flag){
         temp_num=NUM_ENTRIES_PER_TIME-(MAP_REAL_MAX_ENTRIES-MAP_REAL_NUM_ENTRIES);
         if(temp_num>0){
-            Victim_pos=Fast_Find_Victim_In_RCMT_W();  //此函数实现优先置换区干净页的优先剔除，函数不在重写
+            Victim_pos=WRFTL_Find_Victim_In_WCMT();  //此函数实现优先置换区干净页的优先剔除
             curr_lpn=real_arr[Victim_pos];
-            real_arr[Victim_pos]=0;
 
-            //先将受害块剔除，之后与同簇数据一同回写
-            MLC_opagemap[curr_lpn].map_age=MAP_INVALID;
-            MLC_opagemap[curr_lpn].update = 0;
-            Temp=DeleteLRUInList(WRFTL_Head);
-            if(Temp->lpn_num!=curr_lpn){
-              printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
-              assert(0);
-            }
-            MAP_REAL_NUM_ENTRIES--;
+            if(MLC_opagemap[curr_lpn].update!=0){
+                //表明优先置换区没有干净页，选择藏也，聚簇剔除
+                //先将受害页剔除，之后与同簇数据一同回写
+                MLC_opagemap[curr_lpn].map_status=MAP_INVALID;
+                MLC_opagemap[curr_lpn].map_age=0;
+                MLC_opagemap[curr_lpn].update=0;
+                real_arr[Victim_pos]=0;
+                Temp=DeleteLRUInList(WRFTL_Head);
+                if(Temp->lpn_num!=curr_lpn){
+                printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
+                assert(0);
+                }
+                MAP_REAL_NUM_ENTRIES--;
+                //整簇回写，数据统计
+                //用maxentry代表待剔除的簇
+                maxentry=(curr_lpn-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE;
+                send_flash_request(maxentry*8,8,1,2,1);
+                translation_read_num++;
+                send_flash_request(maxentry*8,8,0,2,1);
+                translation_write_num++;
 
-            //正簇回写，数据统计
-            //用maxentry代表待剔除的簇
-            maxentry=(curr_lpn-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE;
-            send_flash_request(maxentry*8,8,1,2,1);
-            translation_read_num++;
-            send_flash_request(maxentry*8,8,0,2,1);
-            translation_write_num++;
-
-            //real_arr数组里面存的是lpn,将翻译页关联的映射项全部置为干净
-            for(indexold = 0;indexold < MAP_REAL_MAX_ENTRIES; indexold++){
-                if(((real_arr[indexold]-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE) == maxentry){
-                    MLC_opagemap[real_arr[indexold]].update = 0;
+                //real_arr数组里面存的是lpn,将翻译页关联的映射项全部置为干净
+                for(indexold = 0;indexold < MAP_REAL_MAX_ENTRIES; indexold++){
+                    if(((real_arr[indexold]-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE) == maxentry){
+                        MLC_opagemap[real_arr[indexold]].update = 0;
+                    }
                 }
             }
+            //仅干净页剔除，无需回写操作
+            else{
+                MLC_opagemap[curr_lpn].map_status=MAP_INVALID;
+                MLC_opagemap[curr_lpn].map_age=0;
+                MLC_opagemap[curr_lpn].update=0;
+                real_arr[Victim_pos]=0;
+                Temp=DeleteLRUInList(WRFTL_Head);
+                if(Temp->lpn_num!=curr_lpn){
+                printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
+                assert(0);
+                }
+                MAP_REAL_NUM_ENTRIES--;
+            }
+            
         }
     }
     //非预取
     else{
         //判断是否满
         if(MAP_REAL_NUM_ENTRIES-MAP_REAL_MAX_ENTRIES == 0){
-            Victim_pos=Fast_Find_Victim_In_RCMT_W();  //此函数实现优先置换区干净页的优先剔除，函数不在重写
+            Victim_pos=WRFTL_Find_Victim_In_WCMT();  //此函数实现优先置换区干净页的优先剔除，函数不在重写
             curr_lpn=real_arr[Victim_pos];
-            real_arr[Victim_pos]=0;
 
-            //先将受害块剔除，之后与同簇数据一同回写
-            MLC_opagemap[curr_lpn].map_age=MAP_INVALID;
-            MLC_opagemap[curr_lpn].update = 0;
-            Temp=DeleteLRUInList(WRFTL_Head);
-            if(Temp->lpn_num!=curr_lpn){
-              printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
-              assert(0);
-            }
-            MAP_REAL_NUM_ENTRIES--;
-
-            //正簇回写，数据统计
-            //用maxentry代表待剔除的簇
-            maxentry=(curr_lpn-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE;
-            send_flash_request(maxentry*8,8,1,2,1);
-            translation_read_num++;
-            send_flash_request(maxentry*8,8,0,2,1);
-            translation_write_num++;
-
-            //real_arr数组里面存的是lpn,将翻译页关联的映射项全部置为干净
-            for(indexold = 0;indexold < MAP_REAL_MAX_ENTRIES; indexold++){
-                if(((real_arr[indexold]-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE) == maxentry){
-                    MLC_opagemap[real_arr[indexold]].update = 0;
+            if(MLC_opagemap[curr_lpn].update!=0){
+                //表明优先置换区没有干净页，选择藏也，聚簇剔除
+                //先将受害页剔除，之后与同簇数据一同回写
+                MLC_opagemap[curr_lpn].map_status=MAP_INVALID;
+                MLC_opagemap[curr_lpn].map_age=0;
+                MLC_opagemap[curr_lpn].update=0;
+                real_arr[Victim_pos]=0;
+                Temp=DeleteLRUInList(WRFTL_Head);
+                if(Temp->lpn_num!=curr_lpn){
+                printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
+                assert(0);
                 }
+                MAP_REAL_NUM_ENTRIES--;
+                //整簇回写，数据统计
+                //用maxentry代表待剔除的簇
+                maxentry=(curr_lpn-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE;
+                send_flash_request(maxentry*8,8,1,2,1);
+                translation_read_num++;
+                send_flash_request(maxentry*8,8,0,2,1);
+                translation_write_num++;
+
+                //real_arr数组里面存的是lpn,将翻译页关联的映射项全部置为干净
+                for(indexold = 0;indexold < MAP_REAL_MAX_ENTRIES; indexold++){
+                    if(((real_arr[indexold]-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE) == maxentry){
+                        MLC_opagemap[real_arr[indexold]].update = 0;
+                    }
+                }
+            }
+            //仅干净页剔除，无需回写操作
+            else{
+                MLC_opagemap[curr_lpn].map_status=MAP_INVALID;
+                MLC_opagemap[curr_lpn].map_age=0;
+                MLC_opagemap[curr_lpn].update=0;
+                real_arr[Victim_pos]=0;
+                Temp=DeleteLRUInList(WRFTL_Head);
+                if(Temp->lpn_num!=curr_lpn){
+                printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
+                assert(0);
+                }
+                MAP_REAL_NUM_ENTRIES--;
             }
         }
     }
@@ -3608,4 +3654,51 @@ void WRFLT_RCMT_Is_Full(int flag)
             ghost_arr[pos]=0;
         }
     }
+}
+
+
+/***********************************
+ * 通过双链表，在WCMT中找到受害页
+ */
+//int  Fast_Find_Victim_In_RCMT_W()
+int WRFTL_Find_Victim_In_WCMT()
+{
+  Node *Temp;
+  int i,pos_index,Victim_index,curr_lpn,clean_flag=0;
+//  从尾部进行扫描,优先找到干净项进行删除
+  Temp=WRFTL_Head->pre;
+  for(i=0;i<WRFTL_Window_Size;i++){
+    Temp=Temp->pre;
+    curr_lpn=Temp->lpn_num;
+    if(MLC_opagemap[curr_lpn].update==0 && MLC_opagemap[curr_lpn].map_status==MAP_REAL){
+      clean_flag=1;
+      break;
+    }
+  }
+
+  if(clean_flag==0){
+//      选择LRU位置的脏映射项
+    curr_lpn=WRFTL_Head->pre->lpn_num;
+    Victim_index=search_table(real_arr,MAP_REAL_MAX_ENTRIES,curr_lpn);
+    if(Victim_index==-1){
+      printf("can not find LRU pos lpn %d in real_arr\n",curr_lpn);
+      assert(0);
+    }
+
+  }else{
+//    选择窗口内的干净页映射项
+    if(MLC_opagemap[curr_lpn].update!=0){
+      printf("error MLC_opagemap[%d]->update can not be update\n",curr_lpn);
+      assert(0);
+    }
+    Victim_index=search_table(real_arr,MAP_REAL_MAX_ENTRIES,curr_lpn);
+    if(Victim_index==-1){
+      printf("can not find LRU pos lpn %d in real_arr\n",curr_lpn);
+      assert(0);
+    }
+  }
+
+  return Victim_index;
+
+
 }
