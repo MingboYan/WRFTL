@@ -3004,10 +3004,10 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag);
 void WRFTL_init_arr();
 void WRFTL_Hit_WCMT(int blkno, int operation);
 void WRFTL_Move_RCMT2MRU(int blkno, int operation);
-void WRFLT_Move_RCMT2WCMT(int blkno, int operation);
-void WRFLT_Pre_Load(int *pageno, int *req_size, int operation);
-void WRFLT_WCMT_Is_Full(int flag);
-void WRFLT_RCMT_Is_Full(int flag);
+void WRFTL_Move_RCMT2WCMT(int blkno, int operation);
+void WRFTL_Pre_Load(int *pageno, int *req_size, int operation);
+void WRFTL_WCMT_Is_Full(int flag);
+void WRFTL_RCMT_Is_Full(int flag);
 int WRFTL_Find_Victim_In_WCMT();
 
 Node *WRFTL_Head=NULL;
@@ -3020,7 +3020,6 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
     int real_min=-1,ghost_min=-1,pos=-1;   //zan shi mei yong 
     Node *Temp;
 
-    operation_time++; //师兄是放到每个操作里面去，但是直接外面统计，应当更方便
     if(flash_flag==0){
         // 处理SLC简单
         send_flash_request(blkno*4,4,operation,1,0);
@@ -3068,6 +3067,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
             }else{
 
                 /************************结束预热仿真,正式进入仿真运行******************/
+                operation_time++; //师兄是放到每个操作里面去，但是直接外面统计，应当更方便
                 //req_entry hit in WCMT
                 if(MLC_opagemap[blkno].map_status==MAP_REAL){
                     if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){ //debug
@@ -3086,10 +3086,10 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                 else if (MLC_opagemap[blkno].map_status==MAP_GHOST){
                     //write
                     if(operation==0){
-                        WRFLT_Move_RCMT2WCMT(blkno, operation);
+                        WRFTL_Move_RCMT2WCMT(blkno, operation);
                         //debug
                         if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){
-                            printf(" after WRFTL_Move_RCMT2WCMT error,ListLength is %d,real_arr size is %d\n",ListLength(ADFTL_Head),MAP_REAL_NUM_ENTRIES);
+                            printf(" after WRFTL_Move_RCMT2WCMT error,ListLength is %d,real_arr size is %d\n",ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
                             assert(0);
                         }
                     }
@@ -3105,21 +3105,21 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                 else{
                     if((cnt+1)>=THRESHOLD){
                         //预取
-                        WRFLT_Pre_Load(&blkno, &cnt, operation);
+                        WRFTL_Pre_Load(&blkno, &cnt, operation);
                     }
                     else{
                         //写请求放入WCMT
                         if(operation==0){
-                            WRFLT_WCMT_Is_Full(0);
+                            WRFTL_WCMT_Is_Full(0);
                             WRFTL_Load_Entry2WCMT(blkno, operation);
                             //debug
-                            if(ListLength(ADFTL_Head)!=MAP_REAL_NUM_ENTRIES){
+                            if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){
                                 printf(" after Load_Entry2WCMT error,ListLength is %d,real_arr size is %d\n",ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
                                 assert(0);
                             }
                         }
                         else{
-                            WRFLT_RCMT_Is_Full(0);
+                            WRFTL_RCMT_Is_Full(0);
                             WRFTL_Load_Entry2RCMT(blkno, operation);
                         }
                     }
@@ -3197,11 +3197,11 @@ void WRFTL_Move_RCMT2MRU(int blkno, int operation)
  * 写请求命中RCMT
  * 将映射信息从RCMT中迁移至WCMT的MRU位置
  */
-void WRFLT_Move_RCMT2WCMT(int blkno, int operation)
+void WRFTL_Move_RCMT2WCMT(int blkno, int operation)
 {
     int free_pos=-1;
     int r_pos=-1;
-    WRFLT_WCMT_Is_Full(0);
+    WRFTL_WCMT_Is_Full(0);
     //从RCMT中剔除
     r_pos=search_table(ghost_arr, MAP_GHOST_MAX_ENTRIES, blkno);
     if(r_pos==-1){
@@ -3224,7 +3224,7 @@ void WRFLT_Move_RCMT2WCMT(int blkno, int operation)
     AddNewLPNInMRU(blkno, WRFTL_Head);
     MAP_REAL_NUM_ENTRIES++;
     if(MAP_REAL_NUM_ENTRIES>MAP_REAL_MAX_ENTRIES){
-        printf("real_arr overflow (WRFLT_Move_RCMT2WCMT) lpn=%d\n",blkno);
+        printf("real_arr overflow (WRFTL_Move_RCMT2WCMT) lpn=%d\n",blkno);
         assert(0);
     }
     //应只有写操作
@@ -3244,7 +3244,7 @@ void WRFLT_Move_RCMT2WCMT(int blkno, int operation)
  * 写预取到WCMT
  * 读写都按照预取大小进行预取
  */
-void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
+void WRFTL_Pre_Load(int *pageno, int *req_size, int operation)
 {
     int blkno=(*pageno),cnt=(*req_size);
     int pos=-1,free_pos=-1;
@@ -3264,7 +3264,7 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
                 }
                 //执行WCMT剔除操作，直到空间满足预取大小
                 while(temp_num){
-                    WRFLT_WCMT_Is_Full(1);
+                    WRFTL_WCMT_Is_Full(1);
                     temp_num=NUM_ENTRIES_PER_TIME-(MAP_REAL_MAX_ENTRIES-MAP_REAL_NUM_ENTRIES);
                     //debug
                     if(temp_num < 0){
@@ -3278,31 +3278,24 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
             flash_hit++;  // q:ymb flash_hit 是什么？
             send_flash_request(((blkno-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE)*8, 8, 1, 2,1);
             translation_read_num++;
-            for(indexofarr =0; indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载4个映射表信息,貌似缺少对于是否属于一个翻译页的判断
+            for(indexofarr =0; (cnt>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载多个映射表信息,貌似缺少对于是否属于一个翻译页的判断
             {
-                MLC_opagemap[blkno+indexofarr].map_status=MAP_REAL;
-                MLC_opagemap[blkno+indexofarr].map_age=operation_time;
-                MLC_opagemap[blkno+indexofarr].update=1;
+                //映射信息加载
+                MLC_opagemap[blkno].map_status=MAP_REAL;
+                MLC_opagemap[blkno].map_age=operation_time;
+                MLC_opagemap[blkno].update=1;
                 operation_time++;
                 MAP_REAL_NUM_ENTRIES++;
-                AddNewLPNInMRU(blkno+indexofarr, WRFTL_Head);
+                cnt--;
+                AddNewLPNInMRU(blkno, WRFTL_Head);
                 free_pos=find_free_pos(real_arr, MAP_REAL_MAX_ENTRIES);
                 if(free_pos==-1){
                     printf("can not find free_pos in real_arr\n");
                     assert(0);
                 }
                 real_arr[free_pos]=blkno;
-            }
-            //debug
-            if(MAP_REAL_NUM_ENTRIES > MAP_REAL_MAX_ENTRIES){
-                printf("The WCMT is overflow\n");
-                assert(0);
-            }
-            sequential_count=0; //暂用这个变量
-            for( ;(cnt>0)&&(sequential_count<NUM_ENTRIES_PER_TIME-1);cnt--)    //和杰哥不一样，杰哥NUM_ENTRIES_PER_TIME－1
-            {
+                //对请求进行处理
                 cache_scmt_hit++;//用cache_scmt_hit表示WCMT的命中
-                //
                 if(operation==0){
                     write_count++;
                 }
@@ -3311,11 +3304,15 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
                 send_flash_request(blkno*8, 8, operation, 1, 1);
                 blkno++;
                 rqst_cnt++;
-                sequential_count++;
             }
             cache_scmt_hit--; // 第一次是预取的过程，所以第一次没有命中，－1
             *req_size=cnt;
             *pageno=blkno;
+            //debug
+            if(MAP_REAL_NUM_ENTRIES > MAP_REAL_MAX_ENTRIES){
+                printf("The WCMT is overflow\n");
+                assert(0);
+            }
         }
         //读请求在RCMT中预取
         else{  
@@ -3329,7 +3326,7 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
                 }
                 //执行RCMT剔除操作，直到空间
                 while(temp_num){
-                    WRFLT_RCMT_Is_Full(1);
+                    WRFTL_RCMT_Is_Full(1);
                     temp_num=NUM_ENTRIES_PER_TIME-(MAP_GHOST_MAX_ENTRIES-MAP_GHOST_NUM_ENTRIES);
                     //debug
                     if(temp_num < 0){
@@ -3343,13 +3340,15 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
             flash_hit++;  // q:ymb flash_hit 是什么？
             send_flash_request(((blkno-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE)*8, 8, 1, 2,1);
             translation_read_num++;
-            for(indexofarr =0; indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载4个映射表信息,貌似缺少对于是否属于一个翻译页的判断
+            for(indexofarr =0; (cnt>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载4个映射表信息,貌似缺少对于是否属于一个翻译页的判断
             {
-                MLC_opagemap[blkno+indexofarr].map_status=MAP_GHOST;
-                MLC_opagemap[blkno+indexofarr].map_age=operation_time;
-                MLC_opagemap[blkno+indexofarr].update=0;
+				//yu qu yingshe xinxi
+                MLC_opagemap[blkno].map_status=MAP_GHOST;
+                MLC_opagemap[blkno].map_age=operation_time;
+                MLC_opagemap[blkno].update=0;
                 operation_time++;
                 MAP_GHOST_NUM_ENTRIES++;
+                cnt--;
 
                 free_pos=find_free_pos(ghost_arr, MAP_GHOST_MAX_ENTRIES);
                 if(free_pos==-1){
@@ -3357,17 +3356,8 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
                     assert(0);
                 }
                 ghost_arr[free_pos]=blkno;
-            }
-            //debug
-            if(MAP_GHOST_NUM_ENTRIES > MAP_GHOST_MAX_ENTRIES){
-                printf("The RCMT is overflow\n");
-                assert(0);
-            }
-            sequential_count=0; //暂用这个变量
-            for( ;(cnt>0)&&(sequential_count<NUM_ENTRIES_PER_TIME-1);cnt--)    //和杰哥不一样，杰哥NUM_ENTRIES_PER_TIME－1
-            {
-                cache_slcmt_hit; //用cache_clmt_hit表示RCMT的命中
-                //
+                //qing qiu chu li
+                cache_slcmt_hit++; //用cache_clmt_hit表示RCMT的命中
                 if(operation==0){
                     write_count++;
                 }
@@ -3376,8 +3366,13 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
                 send_flash_request(blkno*8, 8, operation, 1, 1);
                 blkno++;
                 rqst_cnt++;
-                sequential_count++;
             }
+            //debug
+            if(MAP_GHOST_NUM_ENTRIES > MAP_GHOST_MAX_ENTRIES){
+                printf("The RCMT is overflow\n");
+                assert(0);
+            }
+
             cache_slcmt_hit--; //
             *req_size=cnt;
             *pageno=blkno;
@@ -3385,14 +3380,14 @@ void WRFLT_Pre_Load(int *pageno, int *req_size, int operation)
     }
     else{
         if(operation==0){ // write
-            WRFLT_WCMT_Is_Full(0);
+            WRFTL_WCMT_Is_Full(0);
             WRFTL_Load_Entry2WCMT(blkno, operation);
             blkno++;
             *req_size=cnt;
             *pageno=blkno;
         }
         else{
-            WRFLT_RCMT_Is_Full(0);
+            WRFTL_RCMT_Is_Full(0);
             WRFTL_Load_Entry2RCMT(blkno, operation);
             blkno++;
             *req_size=cnt;
@@ -3442,13 +3437,13 @@ void WRFTL_Load_Entry2WCMT(int blkno, int operation)
         assert(0);
     }
 
-    if(SearchLPNInList(blkno,ADFTL_Head)==NULL){
+    if(SearchLPNInList(blkno,WRFTL_Head)==NULL){
       printf("not Add blkno %d into List\n",blkno);
       assert(0);
     }
 
-    if(ListLength(ADFTL_Head)!=MAP_REAL_NUM_ENTRIES){
-      printf("List Length is %d and real_arr num is %d\n",ListLength(ADFTL_Head),MAP_REAL_NUM_ENTRIES);
+    if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){
+      printf("List Length is %d and real_arr num is %d\n",ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
       assert(0);
     }
 
@@ -3501,7 +3496,7 @@ void WRFTL_Load_Entry2RCMT(int blkno, int operation)
  * flag表示是否是预取的判断
  * flag＝1表示预取，需要判断空间是否小于预取个数个
  */
-void WRFLT_WCMT_Is_Full(int flag)
+void WRFTL_WCMT_Is_Full(int flag)
 {
     int Victim_pos=-1, find_free_pos=-1, curr_lpn;
     int temp_num=0;
@@ -3514,7 +3509,7 @@ void WRFLT_WCMT_Is_Full(int flag)
             curr_lpn=real_arr[Victim_pos];
 
             if(MLC_opagemap[curr_lpn].update!=0){
-                //表明优先置换区没有干净页，选择藏也，聚簇剔除
+                //表明优先置换区没有干净页，选择zang ye，聚簇剔除
                 //先将受害页剔除，之后与同簇数据一同回写
                 MLC_opagemap[curr_lpn].map_status=MAP_INVALID;
                 MLC_opagemap[curr_lpn].map_age=0;
@@ -3547,14 +3542,15 @@ void WRFLT_WCMT_Is_Full(int flag)
                 MLC_opagemap[curr_lpn].map_age=0;
                 MLC_opagemap[curr_lpn].update=0;
                 real_arr[Victim_pos]=0;
-                Temp=DeleteLRUInList(WRFTL_Head);
+                //链表操作，删除被置换节点
+                Temp=SearchLPNInList(curr_lpn, WRFTL_Head);
+                DeleteNodeInList(Temp, WRFTL_Head);
                 if(Temp->lpn_num!=curr_lpn){
                 printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
                 assert(0);
                 }
                 MAP_REAL_NUM_ENTRIES--;
             }
-            
         }
     }
     //非预取
@@ -3598,7 +3594,9 @@ void WRFLT_WCMT_Is_Full(int flag)
                 MLC_opagemap[curr_lpn].map_age=0;
                 MLC_opagemap[curr_lpn].update=0;
                 real_arr[Victim_pos]=0;
-                Temp=DeleteLRUInList(WRFTL_Head);
+                //链表操作，删除被置换节点
+                Temp=SearchLPNInList(curr_lpn, WRFTL_Head);
+                DeleteNodeInList(Temp, WRFTL_Head);
                 if(Temp->lpn_num!=curr_lpn){
                 printf("delete lru arr Temp->lpn %d not equal curr-lpn %d\n",Temp->lpn_num,curr_lpn);
                 assert(0);
@@ -3613,19 +3611,19 @@ void WRFLT_WCMT_Is_Full(int flag)
  * 对RCMT进行判断是否满
  * flag与WCMT功能一致
  */
-void WRFLT_RCMT_Is_Full(int flag)
+void WRFTL_RCMT_Is_Full(int flag)
 {
     int ghost_min=-1, pos=-1;
     int temp_num=0;
     if(flag){
         temp_num=NUM_ENTRIES_PER_TIME-(MAP_GHOST_MAX_ENTRIES-MAP_GHOST_NUM_ENTRIES);
         if(temp_num>0){
-            ghost_min=MLC_find_ghost_min();
+            ghost_min=MLC_find_ghost_min(); // ghost_min is lpn
             if(MLC_opagemap[ghost_min].update ==1){
                 printf("RCMT have dirty entry\n");
                 assert(0);
             }
-            MLC_opagemap[ghost_min].map_status==MAP_INVALID;
+            MLC_opagemap[ghost_min].map_status=MAP_INVALID;
             MLC_opagemap[ghost_min].map_age=0;
 
             //evict one entry from ghost cache 
@@ -3639,13 +3637,13 @@ void WRFLT_RCMT_Is_Full(int flag)
         }
     }
     else{
-        if(MAP_REAL_NUM_ENTRIES-MAP_REAL_MAX_ENTRIES == 0){
+        if(MAP_GHOST_NUM_ENTRIES-MAP_GHOST_MAX_ENTRIES == 0){
             ghost_min=MLC_find_ghost_min();
             if(MLC_opagemap[ghost_min].update ==1){
                 printf("RCMT have dirty entry\n");
                 assert(0);
             }
-            MLC_opagemap[ghost_min].map_status==MAP_INVALID;
+            MLC_opagemap[ghost_min].map_status=MAP_INVALID;
             MLC_opagemap[ghost_min].map_age=0;
 
             //evict one entry from ghost cache 
@@ -3670,9 +3668,9 @@ int WRFTL_Find_Victim_In_WCMT()
   Node *Temp;
   int i,pos_index,Victim_index,curr_lpn,clean_flag=0;
 //  从尾部进行扫描,优先找到干净项进行删除
-  Temp=WRFTL_Head->pre;
+  Temp=WRFTL_Head;
   for(i=0;i<WRFTL_Window_Size;i++){
-    Temp=Temp->pre;
+	Temp=Temp->pre;
     curr_lpn=Temp->lpn_num;
     if(MLC_opagemap[curr_lpn].update==0 && MLC_opagemap[curr_lpn].map_status==MAP_REAL){
       clean_flag=1;
