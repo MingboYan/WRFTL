@@ -233,6 +233,31 @@ int  Fast_Find_Victim_In_RCMT_W();
 Node *ADFTL_Head=NULL;
 
 
+/*************************************************************
+ *              author:ymb        WRFTL
+ * *********************************************************/
+int WRFTL_Window_Size=0; //WRFTL优先置换区大小
+double WRFTL_Tau=0.3; //通过Tau调控window_size比例
+// int warm_flag; ADFTL定义过
+void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag);
+void WRFTL_init_arr();
+void WRFTL_Hit_WCMT(int blkno, int operation);
+void WRFTL_Move_RCMT2MRU(int blkno, int operation);
+void WRFTL_Move_RCMT2WCMT(int blkno, int operation);
+void WRFTL_Pre_Load(int *pageno, int *req_size, int operation);
+void WRFTL_WCMT_Is_Full(int flag);
+void WRFTL_RCMT_Is_Full(int flag);
+int WRFTL_Find_Victim_In_WCMT();
+
+Node *WRFTL_Head=NULL;
+
+
+/*************************************************************
+ *              author:ymb        PPFTL
+ * *********************************************************/
+
+// int warm_flag; ADFTL定义过
+void PPFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag);
 
 /***********************************************************************
  *                    debug function
@@ -901,16 +926,18 @@ double callFsim(unsigned int secno, int scount, int operation,int flash_flag)
                 blkno++;
               break;
         case 3:
-		// SDFTL scheme
-		// SDFTL_Scheme(&blkno,&cnt,operation,flash_flag);
-		// DFTL scheme
-		// DFTL_Scheme(&blkno,&cnt,operation,flash_flag);
-		// CPFTL scheme
-		// CPFTL_Scheme(&blkno,&cnt,operation,flash_flag);
-        // ADFTL scheme
-        // ADFTL_Scheme(&blkno,&cnt,operation,flash_flag);
-        // WRFTL scheme
-            WRFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // SDFTL scheme
+            // SDFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // DFTL scheme
+            // DFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // CPFTL scheme
+            // CPFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // ADFTL scheme
+            // ADFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // WRFTL scheme
+            //WRFTL_Scheme(&blkno,&cnt,operation,flash_flag);
+            // PPFTLscheme   用于对比的，纯页级映射，切完全加载如RAM的FTL
+            PPFTL_Scheme(&blkno,&cnt,operation,flash_flag);
             break;
         }//end-switch
 
@@ -2994,23 +3021,11 @@ void ADFTL_pre_load_entry_into_SCMT(int *pageno,int *req_size,int operation)
 }
 
 
-/***************************************
- *          author:ymb WRFTL
- * *************************************/
-int WRFTL_Window_Size=0; //WRFTL优先置换区大小
-double WRFTL_Tau=0.3; //通过Tau调控window_size比例
-// int warm_flag; ADFTL定义过
-void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag);
-void WRFTL_init_arr();
-void WRFTL_Hit_WCMT(int blkno, int operation);
-void WRFTL_Move_RCMT2MRU(int blkno, int operation);
-void WRFTL_Move_RCMT2WCMT(int blkno, int operation);
-void WRFTL_Pre_Load(int *pageno, int *req_size, int operation);
-void WRFTL_WCMT_Is_Full(int flag);
-void WRFTL_RCMT_Is_Full(int flag);
-int WRFTL_Find_Victim_In_WCMT();
 
-Node *WRFTL_Head=NULL;
+
+
+
+
 
 /***************WRFTL整体策略***************/
 
@@ -3081,6 +3096,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                     }
                     //数据统计
                     cache_scmt_hit++;
+                    blkno++;
                 }
                 // req_entry hit in RCMT
                 else if (MLC_opagemap[blkno].map_status==MAP_GHOST){
@@ -3100,6 +3116,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                     }
                     //数据统计
                     cache_slcmt_hit++;
+                    blkno++;
                 }
                 // req_entry miss in CMT
                 else{
@@ -3112,6 +3129,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                         if(operation==0){
                             WRFTL_WCMT_Is_Full(0);
                             WRFTL_Load_Entry2WCMT(blkno, operation);
+                            blkno++;
                             //debug
                             if(ListLength(WRFTL_Head)!=MAP_REAL_NUM_ENTRIES){
                                 printf(" after Load_Entry2WCMT error,ListLength is %d,real_arr size is %d\n",ListLength(WRFTL_Head),MAP_REAL_NUM_ENTRIES);
@@ -3121,6 +3139,7 @@ void WRFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
                         else{
                             WRFTL_RCMT_Is_Full(0);
                             WRFTL_Load_Entry2RCMT(blkno, operation);
+                            blkno++;
                         }
                     }
                 }
@@ -3219,14 +3238,6 @@ void WRFTL_Move_RCMT2WCMT(int blkno, int operation)
     real_arr[free_pos]=blkno;
     MLC_opagemap[blkno].map_status=MAP_REAL;
     MLC_opagemap[blkno].map_age=operation_time;
-
-    //链表操作
-    AddNewLPNInMRU(blkno, WRFTL_Head);
-    MAP_REAL_NUM_ENTRIES++;
-    if(MAP_REAL_NUM_ENTRIES>MAP_REAL_MAX_ENTRIES){
-        printf("real_arr overflow (WRFTL_Move_RCMT2WCMT) lpn=%d\n",blkno);
-        assert(0);
-    }
     //应只有写操作
     if(operation==0){
         write_count++;
@@ -3234,7 +3245,13 @@ void WRFTL_Move_RCMT2WCMT(int blkno, int operation)
     }
     else
         read_count++;
-
+    //链表操作
+    AddNewLPNInMRU(blkno, WRFTL_Head);
+    MAP_REAL_NUM_ENTRIES++;
+    if(MAP_REAL_NUM_ENTRIES>MAP_REAL_MAX_ENTRIES){
+        printf("real_arr overflow (WRFTL_Move_RCMT2WCMT) lpn=%d\n",blkno);
+        assert(0);
+    }
     send_flash_request(blkno*8, 8, operation, 1,1);
 }
 
@@ -3278,7 +3295,7 @@ void WRFTL_Pre_Load(int *pageno, int *req_size, int operation)
             flash_hit++;  // q:ymb flash_hit 是什么？
             send_flash_request(((blkno-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE)*8, 8, 1, 2,1);
             translation_read_num++;
-            for(indexofarr =0; (cnt>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载多个映射表信息,貌似缺少对于是否属于一个翻译页的判断
+            for(indexofarr =0; (cnt+1>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载多个映射表信息,貌似缺少对于是否属于一个翻译页的判断
             {
                 //映射信息加载
                 MLC_opagemap[blkno].map_status=MAP_REAL;
@@ -3340,9 +3357,9 @@ void WRFTL_Pre_Load(int *pageno, int *req_size, int operation)
             flash_hit++;  // q:ymb flash_hit 是什么？
             send_flash_request(((blkno-MLC_page_num_for_2nd_map_table)/MLC_MAP_ENTRIES_PER_PAGE)*8, 8, 1, 2,1);
             translation_read_num++;
-            for(indexofarr =0; (cnt>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载4个映射表信息,貌似缺少对于是否属于一个翻译页的判断
+            for(indexofarr =0; (cnt+1>0)&&indexofarr < NUM_ENTRIES_PER_TIME;indexofarr++)//NUM_ENTRIES_PER_TIME在这里表示一次加载4个映射表信息,貌似缺少对于是否属于一个翻译页的判断
             {
-				//yu qu yingshe xinxi
+				//预取映射信息
                 MLC_opagemap[blkno].map_status=MAP_GHOST;
                 MLC_opagemap[blkno].map_age=operation_time;
                 MLC_opagemap[blkno].update=0;
@@ -3372,7 +3389,6 @@ void WRFTL_Pre_Load(int *pageno, int *req_size, int operation)
                 printf("The RCMT is overflow\n");
                 assert(0);
             }
-
             cache_slcmt_hit--; //
             *req_size=cnt;
             *pageno=blkno;
@@ -3668,15 +3684,15 @@ int WRFTL_Find_Victim_In_WCMT()
   Node *Temp;
   int i,pos_index,Victim_index,curr_lpn,clean_flag=0;
 //  从尾部进行扫描,优先找到干净项进行删除
-  Temp=WRFTL_Head;
-  for(i=0;i<WRFTL_Window_Size;i++){
-	Temp=Temp->pre;
-    curr_lpn=Temp->lpn_num;
-    if(MLC_opagemap[curr_lpn].update==0 && MLC_opagemap[curr_lpn].map_status==MAP_REAL){
-      clean_flag=1;
-      break;
+    Temp=WRFTL_Head;
+    for(i=0;i<WRFTL_Window_Size;i++){
+	    Temp=Temp->pre;
+        curr_lpn=Temp->lpn_num;
+        if(MLC_opagemap[curr_lpn].update==0 && MLC_opagemap[curr_lpn].map_status==MAP_REAL){
+            clean_flag=1;
+        break;
+        }
     }
-  }
 
   if(clean_flag==0){
 //      选择LRU位置的脏映射项
@@ -3699,8 +3715,71 @@ int WRFTL_Find_Victim_In_WCMT()
       assert(0);
     }
   }
-
   return Victim_index;
+}
 
 
+
+
+/*************************************************************
+ *              author:ymb        PPFTL
+ * *********************************************************/
+
+void PPFTL_Scheme(int *pageno,int *req_size,int operation,int flash_flag)
+{
+    int blkno=(*pageno),cnt=(*req_size);
+
+    unsigned long t1,t2;
+    Node *Temp;
+
+    int pos=-1,free_pos=-1;
+
+    if(flash_flag==0){
+        send_flash_request(blkno*4, 4, operation, 1,0);
+        blkno++;
+    }
+    else {
+
+        if (itemcount < itemcount_threshold) {
+            //利用trace数进行判断
+            rqst_cnt++;
+            if (operation == 0) {
+                write_count++;//用于计算总的写请求数
+            } else
+                read_count++;
+            blkno++;
+        } else {
+
+            if (itemcount == itemcount_threshold && zhou_flag == 0) {
+                //为了配合warm时候的CMT已经加载，所以需要一个标识符zhou_flag来跳过这个初始化函数
+                request_cnt = rqst_cnt;
+                write_cnt = write_count;
+                read_cnt = read_count;
+                write_ratio = (write_cnt * 1.0) / request_cnt;//写请求比例
+                read_ratio = (read_cnt * 1.0) / request_cnt;  //读请求比列
+
+                average_request_size = (total_request_size * 1.0) / itemcount;//请求平均大小
+                zhou_flag = 1;
+            }
+            rqst_cnt++;
+            /*********PPFTL 逻辑处理*****************/
+
+            if(warm_flag==1){
+                //预热阶段，全部采用预取方式：
+                FTL_Warm(&blkno,&cnt,operation);
+
+            }else{
+                //非预热，仿真运行阶段
+                if(operation==0){
+                    write_count++;
+                }
+                else
+                    read_count++;
+                send_flash_request(blkno*8, 8, operation, 1,1);
+                blkno++;
+            }
+        }
+    }
+    //syn-value
+    (*pageno)=blkno,(*req_size)=cnt;
 }
